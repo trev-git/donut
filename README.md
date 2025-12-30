@@ -1,6 +1,6 @@
-# rotating cube
+# rotating donut
 
-Cool rotating cube
+Cool rotating donut
 
 Move around with w, a, s, d, left shift, space
 

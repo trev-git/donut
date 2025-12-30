@@ -1,10 +1,13 @@
+#include <string.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
+#ifdef DEBUG
+#include <time.h>
+#endif
 
 #include <raylib.h>
 
-#define size(v) (sizeof((v)) / sizeof((v)[0]))
 #define WIDTH 800
 #define HEIGHT 800
 #define FPS 60
@@ -15,110 +18,51 @@ typedef struct Vec3 {
     double z;
 } Vec3;
 
-typedef struct Vec2 {
-    double x;
-    double y;
-} Vec2;
+static const double R = 0.25;
+static const double r = 0.125;
 
-typedef struct Face {
-    size_t total_vertices;
-    int *face;
-} Face;
+static Color buffer[WIDTH * HEIGHT];
 
-static const Vec3 vs[] = {
-    { 0.25,  0.25,  0.25},
-    { 0.25,  0.25, -0.25},
-    { 0.25, -0.25,  0.25},
-    { 0.25, -0.25, -0.25},
-    {-0.25,  0.25,  0.25},
-    {-0.25,  0.25, -0.25},
-    {-0.25, -0.25,  0.25},
-    {-0.25, -0.25, -0.25},
-};
-
-static const Face fs[] = {
+#ifdef DEBUG
+struct timespec get_diff(struct timespec start, struct timespec end)
+{
+    struct timespec ret;
+    ret.tv_sec = end.tv_sec - start.tv_sec;
+    if (start.tv_nsec > end.tv_nsec)
     {
-        .total_vertices = 4,
-        .face = (int []){ 0, 2, 6, 4 }
-    },
-    {
-        .total_vertices = 4,
-        .face = (int []){ 1, 3, 7, 5 }
-    },
-    {
-        .total_vertices = 2,
-        .face = (int []){ 0, 1 }
-    },
-    {
-        .total_vertices = 2,
-        .face = (int []){ 2, 3 }
-    },
-    {
-        .total_vertices = 2,
-        .face = (int []){ 6, 7 }
-    },
-    {
-        .total_vertices = 2,
-        .face = (int []){ 4, 5 }
+        ret.tv_sec--;
+        ret.tv_nsec = start.tv_nsec - end.tv_nsec;
     }
-};
-
-Vec2 project(Vec3 v)
-{
-    return (Vec2){ v.x / v.z, v.y / v.z };
+    else
+    {
+        ret.tv_nsec = end.tv_nsec - start.tv_nsec;
+    }
+    return ret;
 }
-
-Vec3 translate_x(Vec3 v, double dx)
-{
-    v.x += dx;
-    return v;
-}
-
-Vec3 translate_y(Vec3 v, double dy)
-{
-    v.y += dy;
-    return v;
-}
-
-Vec3 translate_z(Vec3 v, double dz)
-{
-    v.z += dz;
-    return v;
-}
-
-Vec2 screen(Vec2 v)
-{
-    /* -1..1 -> 0..2 -> 0..1 -> 0..w/h */
-    return (Vec2){
-        .x = (v.x + 1) / 2 * WIDTH,
-        .y = (1 - (v.y + 1)/2) * HEIGHT
-    };
-}
-
-Vec3 rotate_xz(Vec3 v, double angle)
-{
-    return (Vec3){
-        .x = v.x*cos(angle)-v.z*sin(angle),
-        .y = v.y,
-        .z = v.x*sin(angle)+v.z*cos(angle)
-    };
-}
-
-void draw_line(Vec2 v1, Vec2 v2)
-{
-    DrawLine((int)v1.x, (int)v1.y, (int)v2.x, (int)v2.y, LIME);
-}
+#endif
 
 int main()
 {
     InitWindow(WIDTH, HEIGHT, "3d");
     SetTargetFPS(FPS);
+
     double dx = 0;
     double dy = 0;
     double dz = 1;
     double angle = 0;
+    double x0, y0, z0;
     const double dt = 1.0 / FPS;
-    char buf[128];
+
+    Image img = {
+        .data = buffer,
+        .width = WIDTH,
+        .height = HEIGHT,
+        .mipmaps = 1,
+        .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8
+    };
+    Texture2D texture = LoadTextureFromImage(img);
+
+    char text[128];
 
     while(!WindowShouldClose())
     {
@@ -147,23 +91,71 @@ int main()
             dy -= dt;
         }
 
-        snprintf(buf, 128, "dx: %f, dy: %f, dz: %f", dx, dy, dz);
-        angle += M_PI * dt;
+        snprintf(text, 128, "dx: %f, dy: %f, dz: %f", dx, dy, dz);
+        angle += M_PI_2 * dt;
+        Vec3 c;
+        double ca = cos(angle);
+        double sa = sin(angle);
+
+#ifdef DEBUG
+        struct timespec st = {0};
+        clock_gettime(CLOCK_MONOTONIC, &st);
+#endif
+
+        for (double psi = 0; psi <= 2.0*M_PI; psi += 0.05)
+        {
+            double cos_psi = cos(psi);
+            double sin_psi = sin(psi);
+            for(double phi = 0; phi <= 2.0*M_PI; phi += 0.01)
+            {
+                c.x = (R+r*cos_psi)*cos(phi);
+                c.y = r*sin_psi;
+                c.z = (R+r*cos_psi)*sin(phi);
+
+                // rotate around x
+                y0 = c.y * ca - c.z * sa;
+                z0 = c.y * sa + c.z * ca;
+                c.y = y0;
+                c.z = z0;
+
+                // rotate around z
+                x0 = c.x * ca - c.y * sa;
+                y0 = c.x * sa + c.y * ca;
+                c.x = x0;
+                c.y = y0;
+
+                // translate
+                c.x += dx;
+                c.y += dy;
+                c.z += dz;
+
+                if (c.z <= 0) continue;
+
+                // project
+                c.x /= c.z;
+                c.y /= c.z;
+
+                int sx = (c.x + 1) / 2 * WIDTH;
+                int sy = (1 - (c.y + 1) / 2) * HEIGHT;
+                if ((unsigned int)sx > WIDTH || (unsigned int)sy > HEIGHT) continue;
+                buffer[sy*WIDTH + sx] = LIME;
+            }
+        }
+
+#ifdef DEBUG
+        struct timespec end;
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        struct timespec delta = get_diff(st, end);
+        printf("%ld.%09ldns\r", delta.tv_sec, delta.tv_nsec);
+#endif
+
+        UpdateTexture(texture, buffer);
 
         BeginDrawing();
         ClearBackground(BLACK);
-        for (unsigned i = 0; i < size(fs); i++)
-        {
-            for(unsigned j = 0; j < fs[i].total_vertices; j++)
-            {
-                Vec3 a = vs[fs[i].face[j]];
-                Vec3 b = vs[fs[i].face[(j+1) % fs[i].total_vertices]];
-                draw_line(screen(project(translate_x(translate_y(translate_z(rotate_xz(a, angle), dz), dy), dx))),
-                          screen(project(translate_x(translate_y(translate_z(rotate_xz(b, angle), dz), dy), dx))));
-            }
-        }
-        
-        DrawText(buf, 0, 0, 24, WHITE);
+        DrawTexture(texture, 0, 0, WHITE);
+        DrawText(text, 0, 0, 24, WHITE);
         EndDrawing();
+        memset(buffer, 0, WIDTH*HEIGHT*sizeof(Color));
     }
 }

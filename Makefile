@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-Wall -Wextra -O2 -ffast-math
+CFLAGS=-Wall -Wextra -O2 -ffast-math -march=native
 LDFLAGS=-lraylib -lm
 NAME=main
 OBJS=main.o
